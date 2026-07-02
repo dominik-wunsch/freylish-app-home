@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>COD blocklist</title>
+  <!-- App Bridge must be the first script; it authenticates Direct API calls. -->
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="24b07cb19066d52a95e7534c60e4ba8f"></script>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f6f6f7;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #202223;
+    }
+    .wrap { max-width: 680px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+    .sub { color: #6d7175; margin: 0 0 16px; }
+    .card {
+      background: #fff;
+      border: 1px solid #e1e3e5;
+      border-radius: 10px;
+      padding: 18px;
+    }
+    label { display: block; font-weight: 500; margin-bottom: 6px; }
+    textarea {
+      width: 100%;
+      min-height: 170px;
+      border: 1px solid #c9cccf;
+      border-radius: 8px;
+      padding: 10px;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      resize: vertical;
+    }
+    textarea:focus { outline: 2px solid #005bd3; outline-offset: 1px; border-color: transparent; }
+    .hint { color: #6d7175; font-size: 12.5px; margin: 6px 0 14px; }
+    .row { display: flex; align-items: center; gap: 12px; }
+    button {
+      background: #1a1a1a;
+      color: #fff;
+      border: 0;
+      border-radius: 8px;
+      padding: 9px 16px;
+      font-size: 13.5px;
+      font-weight: 550;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.45; cursor: default; }
+    .count { color: #6d7175; }
+    .msg {
+      margin-top: 14px;
+      border-radius: 8px;
+      padding: 10px 12px;
+      border: 1px solid;
+      display: none;
+      white-space: pre-wrap;
+    }
+    .msg.ok { display: block; background: #f2f8f5; border-color: #b3d0c3; }
+    .msg.warn { display: block; background: #fdf8ef; border-color: #e3cf9e; }
+    .msg.err { display: block; background: #fdf3f2; border-color: #e0b3ae; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Cash on Delivery blocklist</h1>
+    <p class="sub">Emails on this list never see the COD payment option at checkout.</p>
+    <div class="card">
+      <label for="emails">Emails to block</label>
+      <textarea id="emails" placeholder="jedna@adresa.sk, druha@adresa.sk&#10;tretia@adresa.sk"></textarea>
+      <p class="hint">Paste any mix of emails separated by commas, semicolons, spaces or new lines.
+        New entries are appended &mdash; nothing is ever removed here.</p>
+      <div class="row">
+        <button id="add" disabled>Add to blocklist</button>
+        <span class="count" id="count">Loading current blocklist&hellip;</span>
+      </div>
+      <div class="msg" id="msg"></div>
+    </div>
+  </div>
+
+  <script>
+    const NAMESPACE = "cod-blocklist";
+    const KEY = "blocked_emails";
+    const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+    const $emails = document.getElementById("emails");
+    const $add = document.getElementById("add");
+    const $count = document.getElementById("count");
+    const $msg = document.getElementById("msg");
+
+    async function gql(query, variables) {
+      const res = await fetch("shopify:admin/api/graphql.json", {
+        method: "POST",
+        body: JSON.stringify({ query, variables }),
+      });
+      if (!res.ok) throw new Error("Network error (" + res.status + ")");
+      const body = await res.json();
+      if (body.errors && body.errors.length) {
+        throw new Error(body.errors.map((e) => e.message).join("; "));
+      }
+      return body.data;
+    }
+
+    async function loadBlocklist() {
+      const data = await gql(
+        'query { shop { id metafield(namespace: "' + NAMESPACE + '", key: "' + KEY + '") { value } } }'
+      );
+      const parsed = data.shop.metafield ? JSON.parse(data.shop.metafield.value) : [];
+      return { shopId: data.shop.id, emails: Array.isArray(parsed) ? parsed.map(String) : [] };
+    }
+
+    function show(kind, text) {
+      $msg.className = "msg " + kind;
+      $msg.textContent = text;
+    }
+
+    async function refreshCount() {
+      try {
+        const { emails } = await loadBlocklist();
+        $count.textContent = "Currently blocked: " + emails.length;
+      } catch (e) {
+        $count.textContent = "";
+        show("err", "Could not load the blocklist: " + e.message);
+      }
+    }
+
+    $emails.addEventListener("input", () => {
+      $add.disabled = !$emails.value.trim();
+    });
+
+    $add.addEventListener("click", async () => {
+      $add.disabled = true;
+      show("ok", "");
+      $msg.className = "msg";
+      try {
+        const entries = $emails.value
+          .split(/[\s,;]+/)
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean);
+        const valid = [...new Set(entries.filter((e) => EMAIL_RE.test(e)))];
+        const invalid = [...new Set(entries.filter((e) => !EMAIL_RE.test(e)))];
+
+        if (!valid.length) {
+          show("warn", "No valid email addresses found in the input."
+            + (invalid.length ? "\nIgnored: " + invalid.slice(0, 5).join(", ") : ""));
+          return;
+        }
+
+        // Append-only read-modify-write: re-fetch right before saving.
+        const current = await loadBlocklist();
+        const existing = new Set(current.emails);
+        const fresh = valid.filter((e) => !existing.has(e));
+
+        if (fresh.length) {
+          const data = await gql(
+            "mutation Save($metafields: [MetafieldsSetInput!]!) {" +
+            " metafieldsSet(metafields: $metafields) { userErrors { message } } }",
+            {
+              metafields: [{
+                ownerId: current.shopId,
+                namespace: NAMESPACE,
+                key: KEY,
+                type: "json",
+                value: JSON.stringify(current.emails.concat(fresh)),
+              }],
+            }
+          );
+          const errs = data.metafieldsSet.userErrors;
+          if (errs.length) throw new Error(errs.map((e) => e.message).join("; "));
+          $emails.value = "";
+        }
+
+        $count.textContent = "Currently blocked: " + (current.emails.length + fresh.length);
+        let text = "Added " + fresh.length + " new email(s); "
+          + (valid.length - fresh.length) + " already on the list.";
+        if (invalid.length) {
+          text += "\n" + invalid.length + " invalid entries ignored (e.g. "
+            + invalid.slice(0, 5).join(", ") + ").";
+        }
+        show(fresh.length ? "ok" : "warn", text);
+      } catch (e) {
+        show("err", "Saving failed: " + e.message);
+      } finally {
+        $add.disabled = !$emails.value.trim();
+      }
+    });
+
+    refreshCount();
+  </script>
+</body>
+</html>
