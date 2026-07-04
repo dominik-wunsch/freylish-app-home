@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>COD blocklist</title>
+  <title>COD controls</title>
   <!-- App Bridge must be the first script; it authenticates Direct API calls. -->
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="24b07cb19066d52a95e7534c60e4ba8f"></script>
   <style>
@@ -17,12 +17,14 @@
     }
     .wrap { max-width: 680px; margin: 24px auto; padding: 0 16px; }
     h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+    h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
     .sub { color: #6d7175; margin: 0 0 16px; }
     .card {
       background: #fff;
       border: 1px solid #e1e3e5;
       border-radius: 10px;
       padding: 18px;
+      margin-bottom: 16px;
     }
     label { display: block; font-weight: 500; margin-bottom: 6px; }
     textarea {
@@ -34,9 +36,19 @@
       font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
       resize: vertical;
     }
-    textarea:focus { outline: 2px solid #005bd3; outline-offset: 1px; border-color: transparent; }
+    textarea.short { min-height: 90px; }
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      border: 1px solid #c9cccf;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-family: inherit;
+      font-size: 13.5px;
+    }
+    textarea:focus, input:focus { outline: 2px solid #005bd3; outline-offset: 1px; border-color: transparent; }
     .hint { color: #6d7175; font-size: 12.5px; margin: 6px 0 14px; }
     .row { display: flex; align-items: center; gap: 12px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
     button {
       background: #1a1a1a;
       color: #fff;
@@ -49,6 +61,30 @@
     }
     button:disabled { opacity: 0.45; cursor: default; }
     .count { color: #6d7175; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+    .chips:empty { display: none; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #f6f6f7;
+      border: 1px solid #e1e3e5;
+      border-radius: 6px;
+      padding: 2px 4px 2px 10px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .chip-x {
+      background: none;
+      border: 0;
+      color: #6d7175;
+      cursor: pointer;
+      padding: 1px 6px;
+      font-size: 14px;
+      line-height: 1.2;
+      border-radius: 4px;
+    }
+    .chip-x:hover { color: #202223; background: #e7e7e8; }
     .msg {
       margin-top: 14px;
       border-radius: 8px;
@@ -64,30 +100,81 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>Cash on Delivery blocklist</h1>
-    <p class="sub">Emails on this list never see the COD payment option at checkout.</p>
+    <h1>Cash on Delivery controls</h1>
+    <p class="sub">Everything here takes effect at checkout right away &mdash; no deploy needed.</p>
+
     <div class="card">
+      <h2>Blocked emails</h2>
+      <p class="hint">Emails on this list never see the COD payment option at checkout.</p>
       <label for="emails">Emails to block</label>
       <textarea id="emails" placeholder="jedna@adresa.sk, druha@adresa.sk&#10;tretia@adresa.sk"></textarea>
       <p class="hint">Paste any mix of emails separated by commas, semicolons, spaces or new lines.
         New entries are appended &mdash; nothing is ever removed here.</p>
       <div class="row">
-        <button id="add" disabled>Add to blocklist</button>
-        <span class="count" id="count">Loading current blocklist&hellip;</span>
+        <button id="emails-add" disabled>Add to blocklist</button>
+        <span class="count" id="emails-count">Loading current blocklist&hellip;</span>
       </div>
-      <div class="msg" id="msg"></div>
+      <div class="msg" id="emails-msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Blocked phone numbers</h2>
+      <p class="hint">Orders whose delivery phone number is on this list never see COD.
+        Any common format works (<code>+421907123456</code>, <code>00421907123456</code>, <code>0907 123 456</code>) &mdash;
+        matching ignores spacing and country-code prefixes.</p>
+      <label for="phones">Phone numbers to block</label>
+      <textarea id="phones" class="short" placeholder="+421907123456, 00421905111222&#10;0907 123 456"></textarea>
+      <p class="hint">Paste numbers separated by commas, semicolons or new lines.
+        New entries are appended &mdash; nothing is ever removed here.</p>
+      <div class="row">
+        <button id="phones-add" disabled>Add to blocklist</button>
+        <span class="count" id="phones-count">Loading current blocklist&hellip;</span>
+      </div>
+      <div class="msg" id="phones-msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>COD restrictions</h2>
+      <p class="hint">General rules for when COD is offered. Leave a field empty to apply no restriction.
+        Unlike the lists above, saving here overwrites the current settings.</p>
+
+      <label for="countries">Allowed countries</label>
+      <div class="chips" id="countries-chips"></div>
+      <input type="text" id="countries" placeholder="SK, CZ" autocomplete="off" />
+      <p class="hint">Two-letter country codes (ISO&nbsp;3166-1), e.g. <code>SK</code>. Press Enter or a comma to add.
+        Empty list = COD available in all countries. If the delivery country isn&rsquo;t known yet, COD stays visible.</p>
+
+      <div class="grid2">
+        <div>
+          <label for="min-amount">Min order value (EUR)</label>
+          <input type="number" id="min-amount" min="0" step="0.01" placeholder="no limit" />
+          <p class="hint">e.g. 20 &mdash; COD hidden below this cart total.</p>
+        </div>
+        <div>
+          <label for="max-amount">Max order value (EUR)</label>
+          <input type="number" id="max-amount" min="0" step="0.01" placeholder="no limit" />
+          <p class="hint">e.g. 200 &mdash; COD hidden above this cart total.</p>
+        </div>
+      </div>
+
+      <label for="products">Blocked products</label>
+      <textarea id="products" class="short" placeholder="some-product-handle&#10;9066614784283&#10;gid://shopify/Product/9066614784283"></textarea>
+      <p class="hint">Product handles, numeric product IDs or GIDs, separated by commas, spaces or new lines.
+        If the cart contains any of these products, COD is hidden.</p>
+
+      <div class="row">
+        <button id="restrictions-save" disabled>Save restrictions</button>
+        <span class="count" id="restrictions-status">Loading current settings&hellip;</span>
+      </div>
+      <div class="msg" id="restrictions-msg"></div>
     </div>
   </div>
 
   <script>
     const NAMESPACE = "cod-blocklist";
-    const KEY = "blocked_emails";
     const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-    const $emails = document.getElementById("emails");
-    const $add = document.getElementById("add");
-    const $count = document.getElementById("count");
-    const $msg = document.getElementById("msg");
+    const $ = (id) => document.getElementById(id);
 
     async function gql(query, variables) {
       const res = await fetch("shopify:admin/api/graphql.json", {
@@ -102,91 +189,342 @@
       return body.data;
     }
 
-    async function loadBlocklist() {
+    const METAFIELD_QUERY =
+      "query Load($ns: String!, $key: String!) {" +
+      " shop { id metafield(namespace: $ns, key: $key) { value } } }";
+
+    // Loads a JSON-array metafield (blocked_emails / blocked_phones); null -> [].
+    async function loadListMetafield(key) {
+      const data = await gql(METAFIELD_QUERY, { ns: NAMESPACE, key });
+      let list = [];
+      if (data.shop.metafield) {
+        const parsed = JSON.parse(data.shop.metafield.value);
+        if (Array.isArray(parsed)) list = parsed.map(String);
+      }
+      return { shopId: data.shop.id, list };
+    }
+
+    // Loads the restrictions metafield as an object; null/invalid -> {}.
+    async function loadRestrictionsMetafield() {
+      const data = await gql(METAFIELD_QUERY, { ns: NAMESPACE, key: "restrictions" });
+      let obj = {};
+      if (data.shop.metafield) {
+        try {
+          const parsed = JSON.parse(data.shop.metafield.value);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) obj = parsed;
+        } catch (e) { /* corrupt value -> start clean */ }
+      }
+      return { shopId: data.shop.id, obj };
+    }
+
+    async function saveMetafield(ownerId, key, value) {
       const data = await gql(
-        'query { shop { id metafield(namespace: "' + NAMESPACE + '", key: "' + KEY + '") { value } } }'
+        "mutation Save($metafields: [MetafieldsSetInput!]!) {" +
+        " metafieldsSet(metafields: $metafields) { userErrors { message } } }",
+        {
+          metafields: [{
+            ownerId: ownerId,
+            namespace: NAMESPACE,
+            key: key,
+            type: "json",
+            value: JSON.stringify(value),
+          }],
+        }
       );
-      const parsed = data.shop.metafield ? JSON.parse(data.shop.metafield.value) : [];
-      return { shopId: data.shop.id, emails: Array.isArray(parsed) ? parsed.map(String) : [] };
+      const errs = data.metafieldsSet.userErrors;
+      if (errs.length) throw new Error(errs.map((e) => e.message).join("; "));
     }
 
-    function show(kind, text) {
-      $msg.className = "msg " + kind;
-      $msg.textContent = text;
+    function show(el, kind, text) {
+      el.className = "msg " + kind;
+      el.textContent = text;
+    }
+    function hide(el) {
+      el.className = "msg";
+      el.textContent = "";
     }
 
-    async function refreshCount() {
+    // ---- Append-only list sections (emails, phones) ----------------------
+
+    function initAppendSection({ key, noun, textareaId, buttonId, countId, msgId, parse }) {
+      const $ta = $(textareaId);
+      const $btn = $(buttonId);
+      const $count = $(countId);
+      const $msg = $(msgId);
+
+      async function refreshCount() {
+        try {
+          const { list } = await loadListMetafield(key);
+          $count.textContent = "Currently blocked: " + list.length;
+        } catch (e) {
+          $count.textContent = "";
+          show($msg, "err", "Could not load the blocklist: " + e.message);
+        }
+      }
+
+      $ta.addEventListener("input", () => {
+        $btn.disabled = !$ta.value.trim();
+      });
+
+      $btn.addEventListener("click", async () => {
+        $btn.disabled = true;
+        hide($msg);
+        try {
+          const { valid, invalid } = parse($ta.value);
+
+          if (!valid.length) {
+            show($msg, "warn", "No valid " + noun + "s found in the input."
+              + (invalid.length ? "\nIgnored: " + invalid.slice(0, 5).join(", ") : ""));
+            return;
+          }
+
+          // Append-only read-modify-write: re-fetch right before saving.
+          const current = await loadListMetafield(key);
+          const existing = new Set(current.list);
+          const fresh = valid.filter((v) => !existing.has(v));
+
+          if (fresh.length) {
+            await saveMetafield(current.shopId, key, current.list.concat(fresh));
+            $ta.value = "";
+          }
+
+          $count.textContent = "Currently blocked: " + (current.list.length + fresh.length);
+          let text = "Added " + fresh.length + " new " + noun + "(s); "
+            + (valid.length - fresh.length) + " already on the list.";
+          if (invalid.length) {
+            text += "\n" + invalid.length + " invalid entries ignored (e.g. "
+              + invalid.slice(0, 5).join(", ") + ").";
+          }
+          show($msg, fresh.length ? "ok" : "warn", text);
+        } catch (e) {
+          show($msg, "err", "Saving failed: " + e.message);
+        } finally {
+          $btn.disabled = !$ta.value.trim();
+        }
+      });
+
+      refreshCount();
+    }
+
+    function parseEmails(value) {
+      const entries = value
+        .split(/[\s,;]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      return {
+        valid: [...new Set(entries.filter((e) => EMAIL_RE.test(e)))],
+        invalid: [...new Set(entries.filter((e) => !EMAIL_RE.test(e)))],
+      };
+    }
+
+    // Phone numbers may contain internal spaces ("0907 123 456"), so split only
+    // on commas, semicolons and new lines, then strip whitespace inside each entry.
+    // Stored as entered (whitespace removed); the checkout function normalizes
+    // prefixes at match time.
+    function parsePhones(value) {
+      const entries = value
+        .split(/[\n,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const valid = [];
+      const invalid = [];
+      for (const raw of entries) {
+        const stripped = raw.replace(/\s+/g, "");
+        const digits = stripped.replace(/\D/g, "");
+        if (/^\+?[\d\-().\/]+$/.test(stripped) && digits.length >= 5) {
+          valid.push(stripped);
+        } else {
+          invalid.push(raw);
+        }
+      }
+      return { valid: [...new Set(valid)], invalid: [...new Set(invalid)] };
+    }
+
+    initAppendSection({
+      key: "blocked_emails",
+      noun: "email",
+      textareaId: "emails",
+      buttonId: "emails-add",
+      countId: "emails-count",
+      msgId: "emails-msg",
+      parse: parseEmails,
+    });
+
+    initAppendSection({
+      key: "blocked_phones",
+      noun: "phone number",
+      textareaId: "phones",
+      buttonId: "phones-add",
+      countId: "phones-count",
+      msgId: "phones-msg",
+      parse: parsePhones,
+    });
+
+    // ---- Restrictions section (settings, full-object overwrite) ----------
+
+    const $countries = $("countries");
+    const $chips = $("countries-chips");
+    const $minAmount = $("min-amount");
+    const $maxAmount = $("max-amount");
+    const $products = $("products");
+    const $rSave = $("restrictions-save");
+    const $rStatus = $("restrictions-status");
+    const $rMsg = $("restrictions-msg");
+
+    let allowedCountries = [];
+
+    function renderChips() {
+      $chips.textContent = "";
+      allowedCountries.forEach((code, i) => {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.appendChild(document.createTextNode(code));
+        const x = document.createElement("button");
+        x.type = "button";
+        x.className = "chip-x";
+        x.textContent = "×";
+        x.setAttribute("aria-label", "Remove " + code);
+        x.addEventListener("click", () => {
+          allowedCountries.splice(i, 1);
+          renderChips();
+        });
+        chip.appendChild(x);
+        $chips.appendChild(chip);
+      });
+    }
+
+    // Moves valid ISO-2 codes from the text input into chips; leaves
+    // anything invalid in the input and returns it.
+    function absorbCountryInput() {
+      const tokens = $countries.value
+        .split(/[\s,;]+/)
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean);
+      const bad = [];
+      for (const t of tokens) {
+        if (/^[A-Z]{2}$/.test(t)) {
+          if (!allowedCountries.includes(t)) allowedCountries.push(t);
+        } else {
+          bad.push(t);
+        }
+      }
+      $countries.value = bad.join(" ");
+      renderChips();
+      return bad;
+    }
+
+    $countries.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === ",") {
+        ev.preventDefault();
+        absorbCountryInput();
+      }
+    });
+    $countries.addEventListener("blur", () => {
+      absorbCountryInput();
+    });
+
+    function parseProducts(value) {
+      // Handles and IDs never contain whitespace, so split on anything list-like.
+      const tokens = value
+        .split(/[\s,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const ids = [];
+      const handles = [];
+      for (const t of tokens) {
+        if (/^\d+$/.test(t) || /^gid:\/\/shopify\/Product\/\d+$/i.test(t)) {
+          ids.push(t);
+        } else {
+          handles.push(t.toLowerCase());
+        }
+      }
+      return { ids: [...new Set(ids)], handles: [...new Set(handles)] };
+    }
+
+    function setOrDelete(obj, key, value) {
+      if (value === null) delete obj[key];
+      else obj[key] = value;
+    }
+
+    async function loadRestrictionsForm() {
       try {
-        const { emails } = await loadBlocklist();
-        $count.textContent = "Currently blocked: " + emails.length;
+        const { obj } = await loadRestrictionsMetafield();
+        allowedCountries = Array.isArray(obj.allowedCountries)
+          ? [...new Set(obj.allowedCountries
+              .map((c) => String(c).trim().toUpperCase())
+              .filter((c) => /^[A-Z]{2}$/.test(c)))]
+          : [];
+        renderChips();
+        $minAmount.value = typeof obj.minOrderAmount === "number" ? obj.minOrderAmount : "";
+        $maxAmount.value = typeof obj.maxOrderAmount === "number" ? obj.maxOrderAmount : "";
+        const products = []
+          .concat(Array.isArray(obj.blockedProductHandles) ? obj.blockedProductHandles.map(String) : [])
+          .concat(Array.isArray(obj.blockedProductIds) ? obj.blockedProductIds.map(String) : []);
+        $products.value = products.join("\n");
+        $rStatus.textContent = "";
+        $rSave.disabled = false;
       } catch (e) {
-        $count.textContent = "";
-        show("err", "Could not load the blocklist: " + e.message);
+        $rStatus.textContent = "";
+        show($rMsg, "err", "Could not load the current restrictions: " + e.message);
+        // Still allow saving: the form starts from empty defaults.
+        $rSave.disabled = false;
       }
     }
 
-    $emails.addEventListener("input", () => {
-      $add.disabled = !$emails.value.trim();
-    });
-
-    $add.addEventListener("click", async () => {
-      $add.disabled = true;
-      show("ok", "");
-      $msg.className = "msg";
+    $rSave.addEventListener("click", async () => {
+      $rSave.disabled = true;
+      hide($rMsg);
       try {
-        const entries = $emails.value
-          .split(/[\s,;]+/)
-          .map((s) => s.trim().toLowerCase())
-          .filter(Boolean);
-        const valid = [...new Set(entries.filter((e) => EMAIL_RE.test(e)))];
-        const invalid = [...new Set(entries.filter((e) => !EMAIL_RE.test(e)))];
-
-        if (!valid.length) {
-          show("warn", "No valid email addresses found in the input."
-            + (invalid.length ? "\nIgnored: " + invalid.slice(0, 5).join(", ") : ""));
+        const bad = absorbCountryInput();
+        if (bad.length) {
+          show($rMsg, "err", "Not valid two-letter country codes: " + bad.slice(0, 5).join(", "));
           return;
         }
 
-        // Append-only read-modify-write: re-fetch right before saving.
-        const current = await loadBlocklist();
-        const existing = new Set(current.emails);
-        const fresh = valid.filter((e) => !existing.has(e));
-
-        if (fresh.length) {
-          const data = await gql(
-            "mutation Save($metafields: [MetafieldsSetInput!]!) {" +
-            " metafieldsSet(metafields: $metafields) { userErrors { message } } }",
-            {
-              metafields: [{
-                ownerId: current.shopId,
-                namespace: NAMESPACE,
-                key: KEY,
-                type: "json",
-                value: JSON.stringify(current.emails.concat(fresh)),
-              }],
-            }
-          );
-          const errs = data.metafieldsSet.userErrors;
-          if (errs.length) throw new Error(errs.map((e) => e.message).join("; "));
-          $emails.value = "";
+        const minRaw = $minAmount.value.trim();
+        const maxRaw = $maxAmount.value.trim();
+        const min = minRaw === "" ? null : Number(minRaw);
+        const max = maxRaw === "" ? null : Number(maxRaw);
+        if (min !== null && (!isFinite(min) || min < 0)) {
+          show($rMsg, "err", "Min order value must be a non-negative number.");
+          return;
+        }
+        if (max !== null && (!isFinite(max) || max < 0)) {
+          show($rMsg, "err", "Max order value must be a non-negative number.");
+          return;
+        }
+        if (min !== null && max !== null && min > max) {
+          show($rMsg, "err", "Min order value cannot be higher than max order value.");
+          return;
         }
 
-        $count.textContent = "Currently blocked: " + (current.emails.length + fresh.length);
-        let text = "Added " + fresh.length + " new email(s); "
-          + (valid.length - fresh.length) + " already on the list.";
-        if (invalid.length) {
-          text += "\n" + invalid.length + " invalid entries ignored (e.g. "
-            + invalid.slice(0, 5).join(", ") + ").";
-        }
-        show(fresh.length ? "ok" : "warn", text);
+        const { ids, handles } = parseProducts($products.value);
+
+        // Re-fetch right before saving and merge on top of the stored object,
+        // so any keys this page does not manage are preserved.
+        const current = await loadRestrictionsMetafield();
+        const obj = current.obj;
+        setOrDelete(obj, "allowedCountries", allowedCountries.length ? allowedCountries : null);
+        setOrDelete(obj, "minOrderAmount", min);
+        setOrDelete(obj, "maxOrderAmount", max);
+        setOrDelete(obj, "blockedProductHandles", handles.length ? handles : null);
+        setOrDelete(obj, "blockedProductIds", ids.length ? ids : null);
+
+        await saveMetafield(current.shopId, "restrictions", obj);
+
+        const fmt = (v) => (v === null ? "no limit" : v + " EUR");
+        show($rMsg, "ok", "Restrictions saved."
+          + "\nCountries: " + (allowedCountries.length ? allowedCountries.join(", ") : "all allowed")
+          + "\nOrder value: min " + fmt(min) + ", max " + fmt(max)
+          + "\nBlocked products: " + (handles.length + ids.length));
       } catch (e) {
-        show("err", "Saving failed: " + e.message);
+        show($rMsg, "err", "Saving failed: " + e.message);
       } finally {
-        $add.disabled = !$emails.value.trim();
+        $rSave.disabled = false;
       }
     });
 
-    refreshCount();
+    loadRestrictionsForm();
   </script>
 </body>
 </html>
