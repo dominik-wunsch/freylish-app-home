@@ -60,6 +60,12 @@
       cursor: pointer;
     }
     button:disabled { opacity: 0.45; cursor: default; }
+    button.secondary {
+      background: #fff;
+      color: #202223;
+      border: 1px solid #c9cccf;
+    }
+    button.secondary:hover:not(:disabled) { background: #f6f6f7; }
     .count { color: #6d7175; }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
     .chips:empty { display: none; }
@@ -85,6 +91,7 @@
       border-radius: 4px;
     }
     .chip-x:hover { color: #202223; background: #e7e7e8; }
+    .chip-sub { color: #6d7175; font-weight: 400; }
     .msg {
       margin-top: 14px;
       border-radius: 8px;
@@ -157,10 +164,11 @@
         </div>
       </div>
 
-      <label for="products">Blocked products</label>
-      <textarea id="products" class="short" placeholder="some-product-handle&#10;9066614784283&#10;gid://shopify/Product/9066614784283"></textarea>
-      <p class="hint">Product handles, numeric product IDs or GIDs, separated by commas, spaces or new lines.
-        If the cart contains any of these products, COD is hidden.</p>
+      <label>Blocked products</label>
+      <div class="chips" id="products-chips"></div>
+      <button type="button" class="secondary" id="products-pick" disabled>Select products&hellip;</button>
+      <p class="hint">Pick products with the Shopify product browser; if the cart contains any of them, COD is hidden.
+        Product handles saved earlier show up here too and can be removed &mdash; new entries are added via the picker.</p>
 
       <div class="row">
         <button id="restrictions-save" disabled>Save restrictions</button>
@@ -366,7 +374,8 @@
     const $chips = $("countries-chips");
     const $minAmount = $("min-amount");
     const $maxAmount = $("max-amount");
-    const $products = $("products");
+    const $productsChips = $("products-chips");
+    const $productsPick = $("products-pick");
     const $rSave = $("restrictions-save");
     const $rStatus = $("restrictions-status");
     const $rMsg = $("restrictions-msg");
@@ -423,23 +432,121 @@
       absorbCountryInput();
     });
 
-    function parseProducts(value) {
-      // Handles and IDs never contain whitespace, so split on anything list-like.
-      const tokens = value
-        .split(/[\s,;]+/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const ids = [];
-      const handles = [];
-      for (const t of tokens) {
-        if (/^\d+$/.test(t) || /^gid:\/\/shopify\/Product\/\d+$/i.test(t)) {
-          ids.push(t);
-        } else {
-          handles.push(t.toLowerCase());
+    // Blocked products: picked via the App Bridge resource picker.
+    // blockedProducts: { id: GID (or raw stored string), title: string | null }.
+    // blockedHandles: legacy handle strings still stored in the metafield;
+    // shown as removable chips, but new entries only come from the picker.
+    let blockedProducts = [];
+    let blockedHandles = [];
+
+    const PRODUCT_GID_RE = /^gid:\/\/shopify\/Product\/\d+$/i;
+
+    function normalizeProductId(raw) {
+      const s = String(raw).trim();
+      return /^\d+$/.test(s) ? "gid://shopify/Product/" + s : s;
+    }
+
+    // Resolves stored ids to titles in one call; missing/deleted products
+    // keep title = null and are rendered with their raw id.
+    async function resolveProductEntries(storedIds) {
+      const seen = new Set();
+      const entries = [];
+      for (const raw of storedIds) {
+        const id = normalizeProductId(raw);
+        if (!seen.has(id)) {
+          seen.add(id);
+          entries.push({ id, title: null });
         }
       }
-      return { ids: [...new Set(ids)], handles: [...new Set(handles)] };
+      const gids = entries.filter((e) => PRODUCT_GID_RE.test(e.id)).map((e) => e.id);
+      if (gids.length) {
+        try {
+          const data = await gql(
+            "query Titles($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id title } } }",
+            { ids: gids }
+          );
+          const titles = new Map();
+          for (const n of data.nodes) {
+            if (n && n.id) titles.set(n.id, n.title);
+          }
+          for (const e of entries) {
+            if (titles.has(e.id)) e.title = titles.get(e.id);
+          }
+        } catch (e) { /* titles stay null; raw ids are shown instead */ }
+      }
+      return entries;
     }
+
+    function makeChip(label, subLabel, onRemove) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.appendChild(document.createTextNode(label));
+      if (subLabel) {
+        const sub = document.createElement("span");
+        sub.className = "chip-sub";
+        sub.textContent = subLabel;
+        chip.appendChild(sub);
+      }
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "chip-x";
+      x.textContent = "×";
+      x.setAttribute("aria-label", "Remove " + label);
+      x.addEventListener("click", onRemove);
+      chip.appendChild(x);
+      return chip;
+    }
+
+    function renderProductChips() {
+      $productsChips.textContent = "";
+      blockedProducts.forEach((p, i) => {
+        const label = p.title || p.id;
+        const sub = p.title ? null : "(deleted?)";
+        $productsChips.appendChild(makeChip(label, sub, () => {
+          blockedProducts.splice(i, 1);
+          renderProductChips();
+        }));
+      });
+      blockedHandles.forEach((h, i) => {
+        $productsChips.appendChild(makeChip(h, "(handle)", () => {
+          blockedHandles.splice(i, 1);
+          renderProductChips();
+        }));
+      });
+    }
+
+    $productsPick.addEventListener("click", async () => {
+      hide($rMsg);
+      if (!(window.shopify && typeof window.shopify.resourcePicker === "function")) {
+        show($rMsg, "err", "The Shopify product picker is not available."
+          + " Open this page inside the Shopify admin and reload.");
+        return;
+      }
+      try {
+        const selected = await window.shopify.resourcePicker({
+          type: "product",
+          multiple: true,
+          action: "select",
+          selectionIds: blockedProducts
+            .filter((p) => PRODUCT_GID_RE.test(p.id))
+            .map((p) => ({ id: p.id })),
+        });
+        if (!selected) return; // cancelled -> keep current selection
+        // The picker returns the full new selection; keep unresolved entries
+        // (deleted products the picker cannot show) so they are only removed
+        // via their chip, deliberately.
+        const kept = blockedProducts.filter((p) => p.title === null);
+        const keptIds = new Set(kept.map((p) => p.id));
+        blockedProducts = kept.concat(
+          selected
+            .filter((p) => p && p.id && !keptIds.has(p.id))
+            .map((p) => ({ id: p.id, title: p.title || p.id }))
+        );
+        renderProductChips();
+      } catch (e) {
+        show($rMsg, "err", "Product picker failed: " + e.message);
+      }
+    });
 
     function setOrDelete(obj, key, value) {
       if (value === null) delete obj[key];
@@ -457,17 +564,21 @@
         renderChips();
         $minAmount.value = typeof obj.minOrderAmount === "number" ? obj.minOrderAmount : "";
         $maxAmount.value = typeof obj.maxOrderAmount === "number" ? obj.maxOrderAmount : "";
-        const products = []
-          .concat(Array.isArray(obj.blockedProductHandles) ? obj.blockedProductHandles.map(String) : [])
-          .concat(Array.isArray(obj.blockedProductIds) ? obj.blockedProductIds.map(String) : []);
-        $products.value = products.join("\n");
+        blockedHandles = Array.isArray(obj.blockedProductHandles)
+          ? [...new Set(obj.blockedProductHandles.map((h) => String(h).trim()).filter(Boolean))]
+          : [];
+        blockedProducts = Array.isArray(obj.blockedProductIds)
+          ? await resolveProductEntries(obj.blockedProductIds)
+          : [];
+        renderProductChips();
         $rStatus.textContent = "";
-        $rSave.disabled = false;
       } catch (e) {
         $rStatus.textContent = "";
         show($rMsg, "err", "Could not load the current restrictions: " + e.message);
         // Still allow saving: the form starts from empty defaults.
+      } finally {
         $rSave.disabled = false;
+        $productsPick.disabled = false;
       }
     }
 
@@ -498,7 +609,8 @@
           return;
         }
 
-        const { ids, handles } = parseProducts($products.value);
+        const ids = [...new Set(blockedProducts.map((p) => p.id))];
+        const handles = [...new Set(blockedHandles)];
 
         // Re-fetch right before saving and merge on top of the stored object,
         // so any keys this page does not manage are preserved.
