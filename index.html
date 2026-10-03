@@ -112,7 +112,8 @@
 
     <div class="card">
       <h2>Blocked emails</h2>
-      <p class="hint">Emails on this list never see the COD payment option at checkout.</p>
+      <p class="hint">Each email gets the <code>COD_BLOCKED</code> customer tag (a customer record is created if none exists),
+        which hides the COD payment option at checkout &mdash; for guests too. The email is also appended to the list below.</p>
       <label for="emails">Emails to block</label>
       <textarea id="emails" placeholder="jedna@adresa.sk, druha@adresa.sk&#10;tretia@adresa.sk"></textarea>
       <p class="hint">Paste any mix of emails separated by commas, semicolons, spaces or new lines.
@@ -254,7 +255,7 @@
 
     // ---- Append-only list sections (emails, phones) ----------------------
 
-    function initAppendSection({ key, noun, textareaId, buttonId, countId, msgId, parse }) {
+    function initAppendSection({ key, noun, textareaId, buttonId, countId, msgId, parse, block }) {
       const $ta = $(textareaId);
       const $btn = $(buttonId);
       const $count = $(countId);
@@ -286,6 +287,10 @@
             return;
           }
 
+          // Optional per-section blocking step (emails: tag/create customers).
+          // Runs first because it is what actually blocks at checkout.
+          const blockText = block ? await block(valid) : "";
+
           // Append-only read-modify-write: re-fetch right before saving.
           const current = await loadListMetafield(key);
           const existing = new Set(current.list);
@@ -293,17 +298,18 @@
 
           if (fresh.length) {
             await saveMetafield(current.shopId, key, current.list.concat(fresh));
-            $ta.value = "";
           }
+          if (fresh.length || blockText) $ta.value = "";
 
           $count.textContent = "Currently blocked: " + (current.list.length + fresh.length);
-          let text = "Added " + fresh.length + " new " + noun + "(s); "
+          let text = (blockText ? blockText + "\n" : "")
+            + "List: " + fresh.length + " new " + noun + "(s) added; "
             + (valid.length - fresh.length) + " already on the list.";
           if (invalid.length) {
             text += "\n" + invalid.length + " invalid entries ignored (e.g. "
               + invalid.slice(0, 5).join(", ") + ").";
           }
-          show($msg, fresh.length ? "ok" : "warn", text);
+          show($msg, (fresh.length || blockText) ? "ok" : "warn", text);
         } catch (e) {
           show($msg, "err", "Saving failed: " + e.message);
         } finally {
@@ -348,6 +354,86 @@
       return { valid: [...new Set(valid)], invalid: [...new Set(invalid)] };
     }
 
+    // ---- Customer tagging (what actually blocks at checkout) --------------
+    // Shopify does not deliver metafields over 10,000 bytes (~380 emails) to
+    // functions, so the blocked_emails list is invisible to checkout on both
+    // stores. The checkout function evaluates the COD_BLOCKED customer tag even
+    // for a guest who types an existing customer's email, so every blocked
+    // email gets a tagged customer record (created if missing).
+    const BLOCK_TAG = "COD_BLOCKED";
+    const IMPORT_TAG = "cod-blocklist-import";
+
+    async function lookupCustomers(emails) {
+      const found = new Map();
+      for (let i = 0; i < emails.length; i += 20) {
+        const batch = emails.slice(i, i + 20);
+        const fields = batch.map((_, j) =>
+          "c" + j + ": customers(first: 5, query: $q" + j + ") { nodes { id email tags } }").join("\n");
+        const vars = batch.map((_, j) => "$q" + j + ": String!").join(", ");
+        const variables = {};
+        batch.forEach((email, j) => { variables["q" + j] = 'email:"' + email + '"'; });
+        const data = await gql("query Lookup(" + vars + ") { " + fields + " }", variables);
+        batch.forEach((email, j) => {
+          const nodes = (data["c" + j] && data["c" + j].nodes) || [];
+          found.set(email, nodes.filter((n) => String(n.email || "").trim().toLowerCase() === email));
+        });
+      }
+      return found;
+    }
+
+    async function addBlockTag(customerIds) {
+      for (let i = 0; i < customerIds.length; i += 40) {
+        const batch = customerIds.slice(i, i + 40);
+        const fields = batch.map((_, j) =>
+          "t" + j + ': tagsAdd(id: $id' + j + ', tags: ["' + BLOCK_TAG + '"]) { userErrors { message } }').join("\n");
+        const vars = batch.map((_, j) => "$id" + j + ": ID!").join(", ");
+        const variables = {};
+        batch.forEach((id, j) => { variables["id" + j] = id; });
+        const data = await gql("mutation Tag(" + vars + ") { " + fields + " }", variables);
+        const errs = Object.values(data).flatMap((r) => r.userErrors);
+        if (errs.length) throw new Error(errs.map((e) => e.message).join("; "));
+      }
+    }
+
+    async function createBlockedCustomer(email) {
+      const data = await gql(
+        "mutation Create($input: CustomerInput!) {" +
+        " customerCreate(input: $input) { customer { id } userErrors { message } } }",
+        { input: { email: email, tags: [BLOCK_TAG, IMPORT_TAG] } }
+      );
+      return !!data.customerCreate.customer;
+    }
+
+    // Returns a one-line summary for the result message.
+    async function blockCustomersForEmails(valid) {
+      const hits = await lookupCustomers(valid);
+      const toTag = [];
+      let tagged = 0, already = 0, created = 0;
+      const toCreate = [], failed = [];
+      for (const email of valid) {
+        const customers = hits.get(email) || [];
+        if (!customers.length) { toCreate.push(email); continue; }
+        const untagged = customers.filter((c) => !c.tags.includes(BLOCK_TAG));
+        if (untagged.length) { untagged.forEach((c) => toTag.push(c.id)); tagged += 1; }
+        else already += 1;
+      }
+      await addBlockTag(toTag);
+      for (const email of toCreate) {
+        try {
+          if (await createBlockedCustomer(email)) created += 1; else failed.push(email);
+        } catch (e) {
+          failed.push(email);
+        }
+      }
+      let text = "Blocked " + tagged + " existing customer(s), created and blocked " + created
+        + " new record(s); " + already + " already blocked.";
+      if (failed.length) {
+        text += "\n" + failed.length + " could not be blocked (Shopify refused to create a customer): "
+          + failed.slice(0, 5).join(", ");
+      }
+      return text;
+    }
+
     initAppendSection({
       key: "blocked_emails",
       noun: "email",
@@ -356,6 +442,7 @@
       countId: "emails-count",
       msgId: "emails-msg",
       parse: parseEmails,
+      block: blockCustomersForEmails,
     });
 
     initAppendSection({
